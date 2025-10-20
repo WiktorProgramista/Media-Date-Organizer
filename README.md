@@ -1,135 +1,128 @@
+```markdown
 # Media Date Organizer
 
-A script for automatically correcting date metadata in multimedia files and organizing them into folders by year.
+A powerful Python tool for organizing and synchronizing media file dates with metadata preservation including GPS coordinates and camera information.
 
-## 📋 Description
+## Features
 
-Media Date Organizer is an advanced Python tool that:
-- **Corrects dates** in file metadata (creation and modification)
-- **Organizes files** into folders by year
-- **Renames files** to a standardized format
-- **Supports various filename formats** with embedded dates
+- **Smart Date Detection**: Extracts dates from 15 different filename patterns
+- **GPS & Camera Metadata**: Preserves EXIF data including GPS coordinates and camera information
+- **Date Synchronization**: Uses the ABSOLUTE OLDEST available date from filename, creation, or modification dates
+- **File Organization**: Automatically organizes files into "Photos from YYYY" folders
+- **Standardized Naming**: Renames files to consistent format: `IMG_YYYYMMDD_HHMMSS_####.ext` for images and `VID_YYYYMMDD_HHMMSS_####.ext` for videos
+- **Multi-format Support**: Handles images (JPEG, PNG, HEIC, WebP, etc.) and videos (MOV, MP4, AVI, etc.)
+- **Non-destructive**: Original files are preserved with corrected dates, copies are created with new names
 
-## ✨ Features
+## Supported File Formats
 
-### 🔧 Date Correction
-- Automatically detects the oldest available date
-- Prioritizes the filename date if it is older than the system date
-- Corrects both the creation and modification dates
-- Preserves the original files with corrected metadata
+### Images
+- **JPEG/JPG** (full EXIF + GPS support)
+- **PNG** (limited EXIF support)
+- **HEIC** (basic metadata preservation)
+- **WebP** (EXIF + GPS support)
+- **TIFF/TIF, BMP, RAW, GIF**
 
-### 📁 File Organization
-- Creates `Photos from YEAR` folders (e.g., `Photos from 2023`)
-- Automatically sorts by year
-- Unique file naming with a counter
+### Videos
+- **MOV, MP4, AVI, MKV, WMV, FLV, WebM, M4V, 3GP**
 
-### 📸 Supported Formats
-**Images:** JPG, JPEG, PNG, HEIC, BMP, TIFF, WEBP, RAW
-**Videos:** MOV, MP4, AVI, MKV, WMV, FLV, WEBM, M4V, 3GP
+## Supported Filename Patterns
 
-## 🚀 Installation
+The tool recognizes 15 different datetime patterns in filenames:
+- `IMG20230710162352.jpg` (IMG + YYYYMMDDHHMMSS)
+- `VID20240731092916.mp4` (VID + YYYYMMDDHHMMSS)
+- `IMG_20230525_101125.jpg` (IMG_ + YYYYMMDD + time)
+- `PXL_20230525_101125.jpg` (PXL_ + YYYYMMDD + time)
+- `Screenshot_20230525-101125.jpg`
+- `Signal-2023-05-25-10-11-25-123.jpg`
+- And 9 more patterns...
 
-### Requirements
-- Python 3.6+
-- `filedate` library
+## Installation
 
-### Dependency Installation
+1. Clone this repository:
 ```bash
-pip install filedate
+git clone https://github.com/WiktorProgramista/Media-Date-Organizer.git
+cd Media-Date-Organizer
 ```
 
-## 📖 Usage
+2. Install required dependencies:
+```bash
+pip install Pillow filedate
+```
+
+## Usage
 
 ### Basic Usage
 ```bash
-python media_date_organizer.py --output ./organized_photos
+python main.py --path /path/to/search --output /path/to/output
 ```
 
-### With a specified source folder
+### Examples
+
+**Process current directory:**
 ```bash
-python media_date_organizer.py --path ./source_photos --output ./organized_photos
+python main.py --path . --output ./organized_photos
+```
+
+**Process specific folder:**
+```bash
+python main.py --path /Users/username/Pictures --output /Users/username/OrganizedPhotos
 ```
 
 ### Parameters
-- `--path` - Path to Search (default: current folder)
-- `--output` - Output folder (required)
 
-## 🎯 Supported filename patterns
+- `--path`: Directory to search for "Photos from" folders (default: current directory)
+- `--output`: Output directory for organized copies (required)
 
-The script recognizes dates from the following filename formats:
+## How It Works
 
-### Full date with time
-- `IMG20230710162352.jpg` → 2023-07-10 16:23:52
-- `VID20240731092916.mp4` → 2024-07-31 09:29:16
+1. **Searches** for directories containing "Photos from" in their name
+2. **Analyzes** each media file to extract all available dates:
+   - Filename datetime patterns
+   - File creation date
+   - File modification date
+3. **Determines** the ABSOLUTE OLDEST date from all sources
+4. **Corrects** dates in original files to match the oldest date
+5. **Creates copies** with standardized names in year-based folders
+6. **Preserves** all metadata including GPS coordinates and camera information
 
-### Date and time separated
-- `IMG_20230525_101125.jpg` → 2023-05-25 10:11:25
-- `PXL_20230525_101125.jpg` → 2023-05-25 10:11:25
-- `20230525_101125.jpg` → 2023-05-25 10:11:25
+## Output Structure
 
-### Date Only
-- `IMG-20230525-WA0000.jpg` → 2023-05-25 00:00:00
-- `IMG2023052512345.jpg` → 2023-05-25 00:00:00
-
-### Special Formats
-- `Screenshot_20230525-101125.jpg`
-- `FB_IMG_20230525101125.jpg`
-- `Signal-2023-05-25-10-11-25-123.jpg`
-
-## 📊 Example in action
-
-### Before processing
 ```
-source_photos/
-├── IMG20230710162352.jpg
-├── IMG_20230815_143022.jpg
-├── vacation_photo.jpg (system date: 2023-12-25)
-└── VID20240120120000.mp4
-```
-
-### After processing
-```
-organized_photos/
+output_directory/
 ├── Photos from 2023/
-│ ├── IMG_20230710_162352_0001.jpg
-│ ├── IMG_20230815_143022_0002.jpg
-│ └── IMG_20231225_000000_0003.jpg
-└── Photos from 2024/
-└── VID_20240120_120000_0004.mp4
+│   ├── IMG_20230710_162352_0001.jpg
+│   ├── VID_20230710_162415_0002.mp4
+│   └── IMG_20230711_093000_0003.heic
+├── Photos from 2024/
+│   ├── IMG_20240115_120000_0001.jpg
+│   └── VID_20240115_120030_0002.mov
+└── ...
 ```
 
-## ⚙️ Operational Logic
+## Metadata Preservation
 
-### Date Priorities
-1. **Date from the file name** - if it is older than the system date
-2. **Oldest system date** - if the name does not contain a date
-3. **Current date** - as a last resort
+- **GPS Data**: Latitude/longitude coordinates preserved with Google Maps links
+- **Camera Info**: Make, model, and software information
+- **EXIF Data**: All EXIF metadata preserved for supported formats
+- **File Dates**: Creation, modification, and access dates synchronized
 
-### Output File Name Structure
-- **Images:** `IMG_YYYYMMDD_HHMMSS_####.ext`
-- **Video:** `VID_YYYYMMDD_HHMMSS_####.ext`
+## Requirements
 
-Example: `IMG_20230710_162352_0001.jpg`
+- Python 3.6+
+- Pillow (PIL) for image processing
+- filedate for date manipulation
 
-## 🛠️ Development
+## License
 
-### Adding New Patterns
-Patterns are defined in the `DATE_PATTERNS` variable using regular expressions.
+This project is open source and available under the [MIT License](LICENSE).
 
-### Extending Functionality
-The script can be easily extended with:
-- Support for additional file formats
-- New naming patterns
-- Alternative organization strategies
+## Contributing
 
-## 📄 License
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
 
-MIT License - free to use, modify, and distribute.
+## Author
 
-## 🤝 Contributing
+Created by [WiktorProgramista](https://github.com/WiktorProgramista)
+```
 
-We encourage you to submit issues and pull requests!
-
---
-
-**Note:** The script creates copies of the files in a new structure; the original files remain unchanged (except for date metadata).
+This README provides comprehensive documentation in English covering all the features, usage instructions, and technical details of your Media Date Organizer tool. It's structured to be clear for both technical and non-technical users.
