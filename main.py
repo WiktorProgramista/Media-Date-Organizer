@@ -730,37 +730,25 @@ def process_media_file(file_path, output_base_dir, file_counter):
         traceback.print_exc()
         return False, file_counter
 
-def find_photos_directories(search_path):
+def find_media_files(search_path):
     """
-    Find all directories that contain 'Photos from' in their name
-    """
-    photos_dirs = []
-    
-    for root, dirs, files in os.walk(search_path):
-        for dir_name in dirs:
-            if 'Photos from' in dir_name:
-                full_path = os.path.join(root, dir_name)
-                photos_dirs.append(full_path)
-                print(f"Found Photos directory: {full_path}")
-    
-    return photos_dirs
-
-def find_media_files_in_directories(directories):
-    """
-    Find all media files (images and videos) in the given directories
+    Find all media files (images and videos) in the given directory and all subdirectories
     """
     media_files = []
     
-    for directory in directories:
-        print(f"Searching in: {directory}")
-        for root, dirs, files in os.walk(directory):
-            for file in files:
-                file_ext = os.path.splitext(file)[1].lower()
-                if file_ext in ALL_EXTENSIONS:
-                    full_path = os.path.join(root, file)
-                    media_files.append(full_path)
-                    print(f"  Found: {file}")
+    print(f"Searching for media files in: {os.path.abspath(search_path)}")
     
+    for root, dirs, files in os.walk(search_path):
+        # Skip system directories to improve performance
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'node_modules']]
+        
+        for file in files:
+            file_ext = os.path.splitext(file)[1].lower()
+            if file_ext in ALL_EXTENSIONS:
+                full_path = os.path.join(root, file)
+                media_files.append(full_path)
+    
+    print(f"Found {len(media_files)} media files in all directories")
     return media_files
 
 def main():
@@ -786,7 +774,7 @@ def main():
         os.makedirs(output_base_dir)
         print(f"Created output directory: {output_base_dir}")
     
-    print(f"Searching for 'Photos from' directories in: {os.path.abspath(search_path)}")
+    print(f"Searching for media files in: {os.path.abspath(search_path)}")
     print(f"Output directory for copies: {os.path.abspath(output_base_dir)}")
     print(f"Files will be organized in folders: 'Photos from YYYY'")
     print(f"Supported formats: {', '.join(sorted(ALL_EXTENSIONS))}")
@@ -797,20 +785,11 @@ def main():
     print(f"Original files will be preserved with corrected dates")
     print(f"Copies with new names will be created in year folders")
     
-    # Find all directories containing 'Photos from'
-    photos_dirs = find_photos_directories(search_path)
-    print(f"Found {len(photos_dirs)} directories with 'Photos from'")
-    
-    if not photos_dirs:
-        print("No 'Photos from' directories found.")
-        return
-    
-    # Find all media files in Photos directories
-    media_files = find_media_files_in_directories(photos_dirs)
-    print(f"Found {len(media_files)} media files in Photos directories")
+    # Find all media files in ALL directories
+    media_files = find_media_files(search_path)
     
     if not media_files:
-        print("No media files found in Photos directories.")
+        print("No media files found.")
         return
     
     # Sort files by current creation date for consistent processing
