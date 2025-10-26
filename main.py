@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from PIL import Image, ExifTags
 from PIL.ExifTags import TAGS, GPSTAGS
+import subprocess
 
 # Define patterns for date extraction from filenames - with full datetime support
 DATE_PATTERNS = [
@@ -44,121 +45,198 @@ DATE_PATTERNS = [
     re.compile(r'^MS_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})', re.IGNORECASE),
 ]
 
-# Supported file extensions - MOV jest już na liście
+# Supported file extensions
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.heic', '.bmp', '.tiff', '.tif', '.webp', '.raw', '.arw', '.cr2', '.nef', '.gif'}
-VIDEO_EXTENSIONS = {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp'}  # .mov jest tutaj
+VIDEO_EXTENSIONS = {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp'}
 ALL_EXTENSIONS = IMAGE_EXTENSIONS.union(VIDEO_EXTENSIONS)
 
-def get_gps_info(exif_data):
+def get_exif_metadata_advanced(file_path):
     """
-    Extract GPS information from EXIF data
-    Returns dictionary with GPS coordinates or None if no GPS data
-    """
-    try:
-        if 'GPSInfo' not in exif_data:
-            return None
-        
-        gps_info = {}
-        gps_data = exif_data['GPSInfo']
-        
-        # Extract GPS tags
-        for tag, value in gps_data.items():
-            tag_name = GPSTAGS.get(tag, tag)
-            gps_info[tag_name] = value
-        
-        # Convert to decimal coordinates if possible
-        gps_coords = convert_gps_coordinates(gps_info)
-        if gps_coords:
-            gps_info['decimal_coordinates'] = gps_coords
-            gps_info['google_maps_url'] = f"https://maps.google.com/?q={gps_coords[0]},{gps_coords[1]}"
-        
-        return gps_info
-    except Exception as e:
-        print(f"    ⚠ Error extracting GPS info: {e}")
-        return None
-
-def convert_gps_coordinates(gps_info):
-    """
-    Convert GPS coordinates from EXIF format to decimal degrees
+    Extract EXIF metadata using exiftool for better compatibility
     """
     try:
-        # GPSLatitude and GPSLongitude should be available
-        if 'GPSLatitude' not in gps_info or 'GPSLongitude' not in gps_info:
-            return None
+        result = subprocess.run([
+            'exiftool', 
+            '-DateTimeOriginal',
+            '-CreateDate',
+            '-ModifyDate',
+            '-FileModifyDate',
+            '-Make',
+            '-Model',
+            '-GPSLatitude',
+            '-GPSLongitude',
+            '-GPSLatitudeRef',
+            '-GPSLongitudeRef',
+            '-json',
+            file_path
+        ], capture_output=True, text=True, timeout=30)
         
-        # Get reference directions
-        lat_ref = gps_info.get('GPSLatitudeRef', 'N')
-        lon_ref = gps_info.get('GPSLongitudeRef', 'E')
-        
-        # Convert latitude
-        lat = gps_info['GPSLatitude']
-        lat_deg = float(lat[0])
-        lat_min = float(lat[1])
-        lat_sec = float(lat[2])
-        decimal_lat = lat_deg + (lat_min / 60.0) + (lat_sec / 3600.0)
-        if lat_ref == 'S':
-            decimal_lat = -decimal_lat
-        
-        # Convert longitude
-        lon = gps_info['GPSLongitude']
-        lon_deg = float(lon[0])
-        lon_min = float(lon[1])
-        lon_sec = float(lon[2])
-        decimal_lon = lon_deg + (lon_min / 60.0) + (lon_sec / 3600.0)
-        if lon_ref == 'W':
-            decimal_lon = -decimal_lon
-        
-        return (decimal_lat, decimal_lon)
-        
-    except Exception as e:
-        print(f"    ⚠ Error converting GPS coordinates: {e}")
-        return None
-
-def get_exif_metadata(image):
-    """
-    Extract EXIF metadata from PIL Image including GPS data
-    """
-    try:
-        exif_data = {}
-        if hasattr(image, '_getexif') and image._getexif() is not None:
-            for tag_id, value in image._getexif().items():
-                tag = TAGS.get(tag_id, tag_id)
-                exif_data[tag] = value
+        if result.returncode == 0 and result.stdout.strip():
+            import json
+            metadata = json.loads(result.stdout)[0]
+            return metadata
+        else:
+            return {}
             
-            # Extract GPS information
-            gps_info = get_gps_info(exif_data)
-            if gps_info:
-                exif_data['GPSInfo'] = gps_info
-                
-        return exif_data
     except Exception as e:
-        print(f"    ⚠ Error extracting EXIF: {e}")
+        print(f"    ⚠ exiftool error: {e}")
         return {}
+
+def get_exif_datetime(file_path):
+    """
+    Get DateTimeOriginal and CreateDate from EXIF metadata using exiftool
+    Returns the oldest available EXIF date
+    """
+    try:
+        metadata = get_exif_metadata_advanced(file_path)
+        
+        exif_dates = []
+        
+        # Priority 1: DateTimeOriginal (data wykonania zdjęcia)
+        if 'DateTimeOriginal' in metadata and metadata['DateTimeOriginal']:
+            try:
+                dt_original = datetime.strptime(metadata['DateTimeOriginal'], '%Y:%m:%d %H:%M:%S')
+                exif_dates.append(dt_original)
+                print(f"    📅 DateTimeOriginal: {dt_original}")
+            except ValueError as e:
+                print(f"    ⚠ Error parsing DateTimeOriginal: {e}")
+        
+        # Priority 2: CreateDate (data utworzenia pliku w EXIF)
+        if 'CreateDate' in metadata and metadata['CreateDate']:
+            try:
+                create_date = datetime.strptime(metadata['CreateDate'], '%Y:%m:%d %H:%M:%S')
+                exif_dates.append(create_date)
+                print(f"    📅 CreateDate: {create_date}")
+            except ValueError as e:
+                print(f"    ⚠ Error parsing CreateDate: {e}")
+        
+        # Priority 3: ModifyDate
+        if 'ModifyDate' in metadata and metadata['ModifyDate']:
+            try:
+                modify_date = datetime.strptime(metadata['ModifyDate'], '%Y:%m:%d %H:%M:%S')
+                exif_dates.append(modify_date)
+                print(f"    📅 ModifyDate: {modify_date}")
+            except ValueError as e:
+                print(f"    ⚠ Error parsing ModifyDate: {e}")
+        
+        if exif_dates:
+            oldest_exif = min(exif_dates)
+            print(f"    ✅ Najstarsza data EXIF: {oldest_exif}")
+            return oldest_exif
+        else:
+            print(f"    ⚠ Brak dat EXIF w metadanych")
+            return None
+            
+    except Exception as e:
+        print(f"    ⚠ Error getting EXIF datetime: {e}")
+        return None
+
+def get_file_dates(file_path):
+    """
+    Get all available dates for a file with EXIF priority
+    """
+    dates = {}
+    
+    print(f"  🔍 Szukam dat dla: {os.path.basename(file_path)}")
+    
+    # PRIORYTET 1: Daty z EXIF (DateTimeOriginal, CreateDate)
+    exif_date = get_exif_datetime(file_path)
+    if exif_date:
+        dates['exif'] = exif_date
+        print(f"    ✅ Znaleziono datę EXIF: {exif_date}")
+    
+    # PRIORYTET 2: Daty systemowe (fallback)
+    try:
+        stat = os.stat(file_path)
+        
+        # macOS birthtime (data utworzenia)
+        if hasattr(stat, 'st_birthtime'):
+            creation_date = datetime.fromtimestamp(stat.st_birthtime)
+            dates['creation'] = creation_date
+            print(f"    📅 System creation: {creation_date}")
+        else:
+            creation_date = datetime.fromtimestamp(stat.st_ctime)
+            dates['creation'] = creation_date
+            print(f"    📅 System ctime: {creation_date}")
+        
+        modification_date = datetime.fromtimestamp(stat.st_mtime)
+        dates['modification'] = modification_date
+        print(f"    📅 System modification: {modification_date}")
+        
+    except Exception as e:
+        print(f"    ⚠ Error getting system dates: {e}")
+    
+    # PRIORYTET 3: Data z nazwy pliku
+    filename_datetime = extract_datetime_from_filename(os.path.basename(file_path))
+    if filename_datetime:
+        dates['filename'] = filename_datetime
+        print(f"    📅 Filename date: {filename_datetime}")
+    
+    return dates
+
+def get_oldest_date(date_dict):
+    """
+    Find the ABSOLUTE OLDEST date from all available sources:
+    - EXIF dates (DateTimeOriginal, CreateDate) - HIGHEST PRIORITY
+    - filename date
+    - creation date  
+    - modification date
+    """
+    exif_date = date_dict.get('exif')
+    creation = date_dict.get('creation')
+    modification = date_dict.get('modification')
+    filename_date = date_dict.get('filename')
+    
+    # Collect all available dates
+    all_dates = []
+    
+    # EXIF ma najwyższy priorytet
+    if exif_date:
+        all_dates.append(exif_date)
+    if creation:
+        all_dates.append(creation)
+    if modification:
+        all_dates.append(modification)
+    if filename_date:
+        all_dates.append(filename_date)
+    
+    if not all_dates:
+        return None
+    
+    # Find the ABSOLUTE OLDEST date
+    oldest_date = min(all_dates)
+    
+    # Report which source provided the oldest date
+    if exif_date and exif_date == oldest_date:
+        print(f"  ✅ Using EXIF datetime (OLDEST: {oldest_date})")
+    elif filename_date and filename_date == oldest_date:
+        print(f"  ✅ Using filename datetime (OLDEST: {oldest_date})")
+    elif creation and creation == oldest_date:
+        print(f"  ✅ Using creation date (OLDEST: {oldest_date})")
+    elif modification and modification == oldest_date:
+        print(f"  ✅ Using modification date (OLDEST: {oldest_date})")
+    
+    return oldest_date
 
 def display_camera_info(file_path):
     """
-    Display camera/model information from file metadata
+    Display camera/model information from file metadata using exiftool
     """
     try:
-        file_ext = os.path.splitext(file_path)[1].lower()
+        metadata = get_exif_metadata_advanced(file_path)
         
-        if file_ext in ['.jpg', '.jpeg', '.tiff', '.tif', '.png', '.webp']:
-            with Image.open(file_path) as img:
-                exif_data = get_exif_metadata(img)
-                
-                make = exif_data.get('Make', '')
-                model = exif_data.get('Model', '')
-                software = exif_data.get('Software', '')
-                
-                if make or model:
-                    camera_info = []
-                    if make:
-                        camera_info.append(str(make).strip())
-                    if model:
-                        camera_info.append(str(model).strip())
-                    
-                    if camera_info:
-                        return " / ".join(camera_info)
+        make = metadata.get('Make', '')
+        model = metadata.get('Model', '')
+        
+        if make or model:
+            camera_info = []
+            if make:
+                camera_info.append(str(make).strip())
+            if model:
+                camera_info.append(str(model).strip())
+            
+            if camera_info:
+                return " / ".join(camera_info)
         
         return None
         
@@ -167,26 +245,49 @@ def display_camera_info(file_path):
 
 def display_gps_info(file_path):
     """
-    Display GPS/location information from file metadata
+    Display GPS/location information from file metadata using exiftool
     """
     try:
-        file_ext = os.path.splitext(file_path)[1].lower()
+        metadata = get_exif_metadata_advanced(file_path)
         
-        if file_ext in ['.jpg', '.jpeg', '.tiff', '.tif', '.png', '.webp']:
-            with Image.open(file_path) as img:
-                exif_data = get_exif_metadata(img)
+        lat = metadata.get('GPSLatitude')
+        lon = metadata.get('GPSLongitude')
+        lat_ref = metadata.get('GPSLatitudeRef', 'N')
+        lon_ref = metadata.get('GPSLongitudeRef', 'E')
+        
+        if lat and lon:
+            # Convert to decimal if needed
+            try:
+                if isinstance(lat, str) and '°' in lat:
+                    # Parse DMS format: 50° 3' 39.84" N
+                    def dms_to_decimal(dms_str, ref):
+                        parts = dms_str.replace('°', ' ').replace("'", ' ').replace('"', ' ').split()
+                        degrees = float(parts[0])
+                        minutes = float(parts[1])
+                        seconds = float(parts[2])
+                        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+                        if ref in ['S', 'W']:
+                            decimal = -decimal
+                        return decimal
+                    
+                    decimal_lat = dms_to_decimal(lat, lat_ref)
+                    decimal_lon = dms_to_decimal(lon, lon_ref)
+                else:
+                    decimal_lat = float(lat)
+                    decimal_lon = float(lon)
+                    if lat_ref == 'S':
+                        decimal_lat = -decimal_lat
+                    if lon_ref == 'W':
+                        decimal_lon = -decimal_lon
                 
-                if 'GPSInfo' in exif_data and 'decimal_coordinates' in exif_data['GPSInfo']:
-                    gps_data = exif_data['GPSInfo']
-                    coords = gps_data['decimal_coordinates']
-                    
-                    # Format coordinates for display
-                    lat = coords[0]
-                    lon = coords[1]
-                    lat_dir = "N" if lat >= 0 else "S"
-                    lon_dir = "E" if lon >= 0 else "W"
-                    
-                    return f"{abs(lat):.6f}°{lat_dir}, {abs(lon):.6f}°{lon_dir}"
+                lat_dir = "N" if decimal_lat >= 0 else "S"
+                lon_dir = "E" if decimal_lon >= 0 else "W"
+                
+                return f"{abs(decimal_lat):.6f}°{lat_dir}, {abs(decimal_lon):.6f}°{lon_dir}"
+                
+            except Exception as e:
+                print(f"    ⚠ GPS conversion error: {e}")
+                return f"{lat} {lat_ref}, {lon} {lon_ref}"
         
         return None
         
@@ -195,125 +296,62 @@ def display_gps_info(file_path):
 
 def copy_file_preserve_metadata(source_path, dest_path):
     """
-    Copy file while preserving all possible metadata
+    Copy file while preserving all possible metadata using exiftool
     """
     try:
         file_ext = os.path.splitext(source_path)[1].lower()
         
         print(f"    📁 Copying {file_ext} file...")
         
-        # Dla plików MOV i GIF używamy shutil.copy2 który kopiuje metadane
-        if file_ext in ['.mov', '.gif']:
-            shutil.copy2(source_path, dest_path)
-            print(f"    ✓ Copied {file_ext.upper()} with basic metadata")
-            return True
-        
-        # For images with EXIF data (JPEG, TIFF)
-        if file_ext in ['.jpg', '.jpeg', '.tiff', '.tif']:
-            try:
-                with Image.open(source_path) as img:
-                    # Preserve EXIF data including GPS
-                    exif_data = img.info.get('exif')
-                    if exif_data:
-                        # Save with original EXIF data (includes GPS)
-                        img.save(dest_path, exif=exif_data)
-                        
-                        # Display camera and GPS info if available
-                        camera_info = display_camera_info(source_path)
-                        gps_info = display_gps_info(source_path)
-                        
-                        if camera_info:
-                            print(f"    📱 Camera: {camera_info}")
-                        if gps_info:
-                            print(f"    📍 Location: {gps_info}")
-                            print(f"    ✓ Copied with EXIF metadata (including GPS)")
-                        else:
-                            print(f"    ✓ Copied with EXIF metadata")
-                    else:
-                        shutil.copy2(source_path, dest_path)
-                        print(f"    ✓ Copied with basic metadata")
-            except Exception as e:
-                print(f"    ⚠ EXIF copy failed, using basic copy: {e}")
-                shutil.copy2(source_path, dest_path)
-        
-        # For PNG files (limited EXIF support)
-        elif file_ext == '.png':
-            try:
-                with Image.open(source_path) as img:
-                    # PNG has limited EXIF support, but we try to preserve what we can
-                    exif_data = img.info.get('exif')
-                    if exif_data:
-                        img.save(dest_path, "PNG", exif=exif_data)
-                        print(f"    ✓ Copied PNG with EXIF metadata")
-                    else:
-                        img.save(dest_path, "PNG")
-                        print(f"    ✓ Copied PNG with basic metadata")
-            except Exception as e:
-                print(f"    ⚠ PNG copy failed, using basic copy: {e}")
-                shutil.copy2(source_path, dest_path)
-        
-        # For WebP files
-        elif file_ext == '.webp':
-            try:
-                with Image.open(source_path) as img:
-                    # WebP supports some EXIF data including GPS
-                    exif_data = img.info.get('exif')
-                    if exif_data:
-                        img.save(dest_path, "WEBP", exif=exif_data)
-                        
-                        # Display GPS info if available
-                        gps_info = display_gps_info(source_path)
-                        if gps_info:
-                            print(f"    📍 Location: {gps_info}")
-                            print(f"    ✓ Copied WebP with EXIF metadata (including GPS)")
-                        else:
-                            print(f"    ✓ Copied WebP with EXIF metadata")
-                    else:
-                        img.save(dest_path, "WEBP")
-                        print(f"    ✓ Copied WebP with basic metadata")
-            except Exception as e:
-                print(f"    ⚠ WebP copy failed, using basic copy: {e}")
-                shutil.copy2(source_path, dest_path)
-        
-        # For HEIC files - preserve metadata if possible
-        elif file_ext == '.heic':
-            try:
-                # For HEIC, we use basic copy but note about GPS preservation
-                shutil.copy2(source_path, dest_path)
+        # For all files, use exiftool to preserve metadata
+        try:
+            # Use exiftool to copy with all metadata
+            result = subprocess.run([
+                'exiftool',
+                '-overwrite_original',
+                '-tagsFromFile', source_path,
+                dest_path
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                print(f"    ✓ Copied with all metadata using exiftool")
                 
-                # Check if original has GPS data
+                # Display camera and GPS info if available
+                camera_info = display_camera_info(source_path)
                 gps_info = display_gps_info(source_path)
+                
+                if camera_info:
+                    print(f"    📱 Camera: {camera_info}")
                 if gps_info:
                     print(f"    📍 Location: {gps_info}")
-                    print(f"    ⚠ HEIC copied directly (GPS data should be preserved)")
-                else:
-                    print(f"    ⚠ HEIC copied directly (install pyheif for better metadata handling)")
-            except Exception as e:
-                print(f"    ⚠ HEIC copy failed: {e}")
-                return False
-        
-        # For other video files
-        elif file_ext in VIDEO_EXTENSIONS:
+                
+                return True
+            else:
+                print(f"    ⚠ exiftool copy failed: {result.stderr}")
+                # Fallback to basic copy
+                shutil.copy2(source_path, dest_path)
+                print(f"    ✓ Fallback: copied with basic metadata")
+                return True
+                
+        except Exception as e:
+            print(f"    ⚠ exiftool failed, using basic copy: {e}")
             shutil.copy2(source_path, dest_path)
-            print(f"    ✓ Copied video ({file_ext}) with basic metadata")
-            
-        # For other files
-        else:
-            shutil.copy2(source_path, dest_path)
-            print(f"    ✓ Copied with basic metadata")
-            
-        return True
+            print(f"    ✓ Fallback: copied with basic metadata")
+            return True
             
     except Exception as e:
         print(f"    ✗ Metadata copy failed: {e}")
-        # Fallback to basic copy
+        # Final fallback
         try:
             shutil.copy2(source_path, dest_path)
-            print(f"    ✓ Fallback: copied with basic metadata")
+            print(f"    ✓ Final fallback: copied with basic metadata")
             return True
         except Exception as e2:
             print(f"    ✗ Complete copy failure: {e2}")
             return False
+
+# Pozostałe funkcje pozostają bez zmian (extract_datetime_from_filename, needs_correction, correct_file_dates, etc.)
+# ... [reszta funkcji pozostaje taka sama jak w oryginalnym kodzie] ...
 
 def extract_datetime_from_filename(filename):
     """
@@ -475,62 +513,6 @@ def extract_datetime_from_filename(filename):
     print(f"  ✗ No pattern matched for filename: {name_without_ext}")
     return None
 
-def get_file_dates(file_path):
-    """
-    Get all available dates for a file
-    Returns dictionary with creation, modification, and filename dates
-    """
-    dates = {}
-    
-    # Get filesystem dates
-    stat = os.stat(file_path)
-    dates['creation'] = datetime.fromtimestamp(stat.st_ctime)
-    dates['modification'] = datetime.fromtimestamp(stat.st_mtime)
-    dates['access'] = datetime.fromtimestamp(stat.st_atime)
-    
-    # Get datetime from filename (only for files with clear datetime patterns)
-    filename_datetime = extract_datetime_from_filename(os.path.basename(file_path))
-    if filename_datetime:
-        dates['filename'] = filename_datetime
-    
-    return dates
-
-def get_oldest_date(date_dict):
-    """
-    Find the ABSOLUTE OLDEST date from all available sources:
-    - filename date
-    - creation date  
-    - modification date
-    """
-    creation = date_dict.get('creation')
-    modification = date_dict.get('modification')
-    filename_date = date_dict.get('filename')
-    
-    # Collect all available dates
-    all_dates = []
-    if creation:
-        all_dates.append(creation)
-    if modification:
-        all_dates.append(modification)
-    if filename_date:
-        all_dates.append(filename_date)
-    
-    if not all_dates:
-        return None
-    
-    # Find the ABSOLUTE OLDEST date
-    oldest_date = min(all_dates)
-    
-    # Report which source provided the oldest date
-    if filename_date and filename_date == oldest_date:
-        print(f"  ✅ Using filename datetime (OLDEST: {oldest_date})")
-    elif creation and creation == oldest_date:
-        print(f"  ✅ Using creation date (OLDEST: {oldest_date})")
-    elif modification and modification == oldest_date:
-        print(f"  ✅ Using modification date (OLDEST: {oldest_date})")
-    
-    return oldest_date
-
 def needs_correction(date_dict, target_date):
     """
     Check if file needs date correction
@@ -655,15 +637,6 @@ def process_media_file(file_path, output_base_dir, file_counter):
         # Get all available dates from ORIGINAL file
         dates = get_file_dates(file_path)
         
-        creation = dates.get('creation')
-        modification = dates.get('modification')
-        filename_date = dates.get('filename')
-        
-        print(f"  Creation date:    {creation}")
-        print(f"  Modification date: {modification}")
-        if filename_date:
-            print(f"  Filename datetime: {filename_date}")
-        
         # Find the ABSOLUTE OLDEST date from all sources
         target_date = get_oldest_date(dates)
         if not target_date:
@@ -779,11 +752,19 @@ def main():
     print(f"Files will be organized in folders: 'Photos from YYYY'")
     print(f"Supported formats: {', '.join(sorted(ALL_EXTENSIONS))}")
     print(f"Supported video formats: {', '.join(sorted(VIDEO_EXTENSIONS))}")
-    print(f"Metadata preservation: EXIF data including GPS coordinates for supported formats")
-    print(f"Supported filename patterns: 15 different datetime formats")
-    print(f"Date priority: ABSOLUTE OLDEST date from filename/creation/modification")
+    print("📅 DATE PRIORITY: EXIF (DateTimeOriginal, CreateDate) > Filename > System Dates")
     print(f"Original files will be preserved with corrected dates")
     print(f"Copies with new names will be created in year folders")
+    
+    # Check if exiftool is available
+    try:
+        result = subprocess.run(['exiftool', '-ver'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"✅ exiftool available: {result.stdout.strip()}")
+        else:
+            print("⚠ exiftool not available, using fallback methods")
+    except:
+        print("⚠ exiftool not installed, using fallback methods")
     
     # Find all media files in ALL directories
     media_files = find_media_files(search_path)
@@ -817,6 +798,7 @@ def main():
     print(f"Original files preserved with corrected dates")
     print(f"Copies with standardized names created in: {os.path.abspath(output_base_dir)}")
     print(f"✅ DATE SYNCHRONIZATION: File dates now match the OLDEST available date")
+    print(f"📅 EXIF metadata used for date detection (DateTimeOriginal, CreateDate)")
     print(f"Camera information detected and preserved")
     print(f"GPS/Location data preserved where available")
     print(f"\nOrganization:")
@@ -824,7 +806,7 @@ def main():
     print(f"  Naming pattern:")
     print(f"    Images: IMG_YYYYMMDD_HHMMSS_####.extension")
     print(f"    Videos: VID_YYYYMMDD_HHMMSS_####.extension")
-    print(f"  Example: 'Photos from 2023/IMG_20230710_162352_0001.jpg'")
+    print(f"  Example: 'Photos from 2025/IMG_20250608_114823_0001.jpg'")
 
 if __name__ == "__main__":
     main()
